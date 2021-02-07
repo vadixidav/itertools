@@ -13,6 +13,7 @@ where
         iter,
         inner_front: None,
         inner_back: None,
+        outer_finished: false,
     }
 }
 
@@ -29,6 +30,7 @@ where
     iter: I,
     inner_front: Option<T::IntoIter>,
     inner_back: Option<T::IntoIter>,
+    outer_finished: bool,
 }
 
 impl<I, T, E> Iterator for FlattenOk<I, T, E>
@@ -51,21 +53,37 @@ where
                 }
             }
 
-            match self.iter.next() {
-                Some(Ok(ok)) => self.inner_front = Some(ok.into_iter()),
-                Some(Err(e)) => return Some(Err(e)),
-                None => {
-                    // Handle the back inner iterator.
-                    if let Some(inner) = &mut self.inner_back {
-                        if let Some(item) = inner.next() {
-                            return Some(Ok(item));
-                        } else {
-                            // This is necessary for the iterator to implement `FusedIterator`
-                            // with only the orginal iterator being fused.
-                            self.inner_back = None;
-                        }
+            if self.outer_finished {
+                // Handle the back inner iterator.
+                if let Some(inner) = &mut self.inner_back {
+                    if let Some(item) = inner.next() {
+                        return Some(Ok(item));
                     } else {
-                        return None;
+                        // This is necessary for the iterator to implement `FusedIterator`
+                        // with only the orginal iterator being fused.
+                        self.inner_back = None;
+                    }
+                } else {
+                    return None;
+                }
+            } else {
+                match self.iter.next() {
+                    Some(Ok(ok)) => self.inner_front = Some(ok.into_iter()),
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => {
+                        self.outer_finished = true;
+                        // Handle the back inner iterator.
+                        if let Some(inner) = &mut self.inner_back {
+                            if let Some(item) = inner.next() {
+                                return Some(Ok(item));
+                            } else {
+                                // This is necessary for the iterator to implement `FusedIterator`
+                                // with only the orginal iterator being fused.
+                                self.inner_back = None;
+                            }
+                        } else {
+                            return None;
+                        }
                     }
                 }
             }
@@ -110,21 +128,37 @@ where
                 }
             }
 
-            match self.iter.next_back() {
-                Some(Ok(ok)) => self.inner_back = Some(ok.into_iter()),
-                Some(Err(e)) => return Some(Err(e)),
-                None => {
-                    // Handle the front inner iterator.
-                    if let Some(inner) = &mut self.inner_front {
-                        if let Some(item) = inner.next_back() {
-                            return Some(Ok(item));
-                        } else {
-                            // This is necessary for the iterator to implement `FusedIterator`
-                            // with only the orginal iterator being fused.
-                            self.inner_front = None;
-                        }
+            if self.outer_finished {
+                // Handle the front inner iterator.
+                if let Some(inner) = &mut self.inner_front {
+                    if let Some(item) = inner.next_back() {
+                        return Some(Ok(item));
                     } else {
-                        return None;
+                        // This is necessary for the iterator to implement `FusedIterator`
+                        // with only the orginal iterator being fused.
+                        self.inner_front = None;
+                    }
+                } else {
+                    return None;
+                }
+            } else {
+                match self.iter.next_back() {
+                    Some(Ok(ok)) => self.inner_back = Some(ok.into_iter()),
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => {
+                        self.outer_finished = true;
+                        // Handle the front inner iterator.
+                        if let Some(inner) = &mut self.inner_front {
+                            if let Some(item) = inner.next_back() {
+                                return Some(Ok(item));
+                            } else {
+                                // This is necessary for the iterator to implement `FusedIterator`
+                                // with only the orginal iterator being fused.
+                                self.inner_front = None;
+                            }
+                        } else {
+                            return None;
+                        }
                     }
                 }
             }
@@ -139,7 +173,7 @@ where
     T::IntoIter: Clone,
 {
     #[inline]
-    clone_fields!(iter, inner_front, inner_back);
+    clone_fields!(iter, inner_front, inner_back, outer_finished);
 }
 
 impl<I, T, E> fmt::Debug for FlattenOk<I, T, E>
@@ -153,6 +187,7 @@ where
             .field("iter", &self.iter)
             .field("inner_front", &self.inner_front)
             .field("inner_back", &self.inner_back)
+            .field("outer_finished", &self.outer_finished)
             .finish()
     }
 }
@@ -160,7 +195,7 @@ where
 /// Only the iterator being flattened needs to implement [`FusedIterator`].
 impl<I, T, E> FusedIterator for FlattenOk<I, T, E>
 where
-    I: FusedIterator<Item = Result<T, E>>,
+    I: Iterator<Item = Result<T, E>>,
     T: IntoIterator,
 {
 }
